@@ -28,7 +28,19 @@ int main(int argc, char *argv[]) {
     JSStringRef script = ReadScript("graphql.js");
     JSValueRef error;
     JSObjectRef module = JSValueToObject(ctx, JSEvaluateScript(ctx, script, NULL, NULL, 1, &error), NULL);
-    JSEvaluateScript(ctx, JSStringCreateWithUTF8CString("graphql.flushTasks();throw new Error(JSON.stringify(graphql.result))"), NULL, NULL, 1, &error);
+    JSEvaluateScript(ctx, JSStringCreateWithUTF8CString(
+        "var graphql = lib.graphql, theresult;"
+        "graphql.graphql(new graphql.GraphQLSchema({"
+        "   query: new graphql.GraphQLObjectType({"
+        "       name: 'Q',"
+        "       fields: {hello: {type: graphql.GraphQLString, resolve: function(){return 'world'}}}"
+        "   })"
+        "}), '{ hello }').then(function(result) {"
+        "   theresult = result;"
+        "});"
+        "lib.flushTasks();"
+        "throw new Error(JSON.stringify(theresult))"
+    ), NULL, NULL, 1, &error);
     if (error) {
         JSStringRef json = JSValueToStringCopy(ctx, error, NULL);
         char buf[1024];

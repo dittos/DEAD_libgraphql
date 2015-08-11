@@ -3,6 +3,15 @@ module.exports = {
     output: {
         path: __dirname,
         filename: 'graphql.js',
-        library: 'graphql'
+        library: 'lib'
+    },
+    module: {
+        loaders: [
+            {
+                test: /\.js$/,
+                exclude: /node_modules/,
+                loader: 'babel-loader'
+            }
+        ]
     }
 };

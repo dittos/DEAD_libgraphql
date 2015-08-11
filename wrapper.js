@@ -4,8 +4,7 @@ global.setTimeout = function(func) {
 
 var _tasks = [];
 
-global.setImmediate = function(func) {
-    var args = Array.prototype.slice.call(arguments)
+global.setImmediate = function(func, ...args) {
     _tasks.push(function() {
         return func.apply(undefined, args);
     });
@@ -14,7 +13,7 @@ global.setImmediate = function(func) {
 
 global.clearImmediate = function(func) {
     // We don't need it
-}
+};
 
 module.exports = {
     flushTasks: function() {
@@ -24,21 +23,6 @@ module.exports = {
             i++;
         }
         _tasks = [];
-    }
+    },
+    graphql: require('graphql'),
 };
-
-var graphql = require('graphql');
-
-graphql.graphql(new graphql.GraphQLSchema({
-    query: new graphql.GraphQLObjectType({
-        name: 'Query',
-        fields: {
-            hello: {
-                type: graphql.GraphQLString,
-                resolve: function() { return 'world' }
-            }
-        }
-    })
-}), '{ hello }').then(function(result) {
-    module.exports.result = result;
-})
