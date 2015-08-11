@@ -1,0 +1,11 @@
+{
+  "name": "libgraphql",
+  "version": "1.0.0",
+  "description": "",
+  "dependencies": {
+    "graphql": "^0.2.6"
+  },
+  "devDependencies": {
+    "webpack": "^1.11.0"
+  }
+}
