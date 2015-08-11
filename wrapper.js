@@ -15,14 +15,31 @@ global.clearImmediate = function(func) {
     // We don't need it
 };
 
+function flushTasks() {
+    var i = 0;
+    while (i < _tasks.length) {
+        _tasks[i]();
+        i++;
+    }
+    _tasks = [];
+}
+
+var graphql = require('graphql');
+
 module.exports = {
-    flushTasks: function() {
-        var i = 0;
-        while (i < _tasks.length) {
-            _tasks[i]();
-            i++;
+    graphql,
+    graphqlSync: function(...args) {
+        var result;
+        var error;
+        graphql.graphql(...args).then(resolve => {
+            result = resolve;
+        }, reject => {
+            error = reject;
+        });
+        flushTasks();
+        if (error) {
+            throw error;
         }
-        _tasks = [];
-    },
-    graphql: require('graphql'),
+        return result;
+    }
 };
