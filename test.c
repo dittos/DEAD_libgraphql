@@ -5,10 +5,27 @@
 typedef struct {
     JSGlobalContextRef js;
     JSObjectRef mainFunc;
-    JSObjectRef schemaCtor;
-    JSObjectRef objectTypeCtor;
-    JSObjectRef stringType;
+    struct {
+        JSObjectRef schemaCtor;
+        JSObjectRef objectTypeCtor;
+        JSObjectRef interfaceTypeCtor;
+        JSObjectRef unionTypeCtor;
+        JSObjectRef enumTypeCtor;
+        JSObjectRef inputObjectTypeCtor;
+        JSObjectRef listCtor;
+        JSObjectRef nonNullCtor;
+    } ctors;
+    struct {
+        JSObjectRef intType;
+        JSObjectRef floatType;
+        JSObjectRef stringType;
+        JSObjectRef booleanType;
+        JSObjectRef idType;
+    } scalarTypes;
 } GraphQLContext;
+
+typedef JSObjectRef GraphQLType;
+
 typedef GraphQLContext* GraphQLContextRef;
 
 typedef JSObjectRef GraphQLResultRef;
@@ -16,6 +33,10 @@ typedef JSObjectRef GraphQLResultRef;
 typedef JSObjectRef GraphQLSchemaRef;
 typedef JSObjectRef GraphQLObjectTypeRef;
 typedef JSObjectRef GraphQLFieldConfigMapRef;
+typedef JSObjectRef GraphQLFieldConfigArgumentMapRef;
+typedef JSObjectRef GraphQLInterfacesRef;
+typedef JSObjectRef GraphQLObjectTypePredicateRef;
+typedef void *(*GraphQLFieldResolveFunc)(void *value);
 
 JSStringRef ReadScript(const char *name) {
     FILE *fp = fopen(name, "rb");
@@ -38,6 +59,12 @@ JSStringRef ReadScript(const char *name) {
     return script;
 }
 
+static void _Eval(JSGlobalContextRef ctx, const char *script, JSObjectRef *out) {
+    JSStringRef scriptStr = JSStringCreateWithUTF8CString(script);
+    *out = JSValueToObject(ctx, JSEvaluateScript(ctx, scriptStr, NULL, NULL, 1, NULL), NULL);
+    JSStringRelease(scriptStr);
+}
+
 GraphQLContextRef GraphQLContextCreate() {
     GraphQLContextRef ctx = malloc(sizeof(GraphQLContext));
     ctx->js = JSGlobalContextCreate(NULL);
@@ -45,63 +72,83 @@ GraphQLContextRef GraphQLContextCreate() {
     JSEvaluateScript(ctx->js, script, NULL, NULL, 1, NULL);
     JSStringRelease(script);
 
-    script = JSStringCreateWithUTF8CString("lib.graphqlSync");
-    ctx->mainFunc = JSValueToObject(ctx->js, JSEvaluateScript(ctx->js, script, NULL, NULL, 1, NULL), NULL);
-    JSStringRelease(script);
-
-    script = JSStringCreateWithUTF8CString("lib.graphql.GraphQLSchema");
-    ctx->schemaCtor = JSValueToObject(ctx->js, JSEvaluateScript(ctx->js, script, NULL, NULL, 1, NULL), NULL);
-    JSStringRelease(script);
-
-    script = JSStringCreateWithUTF8CString("lib.graphql.GraphQLObjectType");
-    ctx->objectTypeCtor = JSValueToObject(ctx->js, JSEvaluateScript(ctx->js, script, NULL, NULL, 1, NULL), NULL);
-    JSStringRelease(script);
+    _Eval(ctx->js, "lib.graphqlSync", &ctx->mainFunc);
     
-    script = JSStringCreateWithUTF8CString("lib.graphql.GraphQLString");
-    ctx->stringType = JSValueToObject(ctx->js, JSEvaluateScript(ctx->js, script, NULL, NULL, 1, NULL), NULL);
-    JSStringRelease(script);
+    _Eval(ctx->js, "lib.graphql.GraphQLSchema", &ctx->ctors.schemaCtor);
+    _Eval(ctx->js, "lib.graphql.GraphQLObjectType", &ctx->ctors.objectTypeCtor);
+    _Eval(ctx->js, "lib.graphql.GraphQLInterfaceType", &ctx->ctors.interfaceTypeCtor);
+    _Eval(ctx->js, "lib.graphql.GraphQLUnionType", &ctx->ctors.unionTypeCtor);
+    _Eval(ctx->js, "lib.graphql.GraphQLEnumType", &ctx->ctors.enumTypeCtor);
+    _Eval(ctx->js, "lib.graphql.GraphQLInputObjectType", &ctx->ctors.inputObjectTypeCtor);
+    _Eval(ctx->js, "lib.graphql.GraphQLList", &ctx->ctors.listCtor);
+    _Eval(ctx->js, "lib.graphql.GraphQLNonNull", &ctx->ctors.nonNullCtor);
     
+    _Eval(ctx->js, "lib.graphql.GraphQLInt", &ctx->scalarTypes.intType);
+    _Eval(ctx->js, "lib.graphql.GraphQLFloat", &ctx->scalarTypes.floatType);
+    _Eval(ctx->js, "lib.graphql.GraphQLString", &ctx->scalarTypes.stringType);
+    _Eval(ctx->js, "lib.graphql.GraphQLBoolean", &ctx->scalarTypes.booleanType);
+    _Eval(ctx->js, "lib.graphql.GraphQLID", &ctx->scalarTypes.idType);
     return ctx;
 }
 
 void GraphQLContextRelease(GraphQLContextRef ctx) {
     JSGlobalContextRelease(ctx->js);
     ctx->js = NULL;
+    
     ctx->mainFunc = NULL;
-    ctx->schemaCtor = NULL;
-    ctx->objectTypeCtor = NULL;
-    ctx->stringType = NULL;
+    
+    ctx->ctors.schemaCtor = NULL;
+    ctx->ctors.objectTypeCtor = NULL;
+    
+    ctx->scalarTypes.intType = NULL;
+    ctx->scalarTypes.floatType = NULL;
+    ctx->scalarTypes.stringType = NULL;
+    ctx->scalarTypes.booleanType = NULL;
+    ctx->scalarTypes.idType = NULL;
+    
+    free(ctx);
+}
+
+static void _SetProperty(JSGlobalContextRef ctx, JSObjectRef obj, const char *name, JSValueRef value) {
+    JSStringRef nameStr = JSStringCreateWithUTF8CString(name);
+    JSObjectSetProperty(ctx, obj, nameStr, value, kJSPropertyAttributeNone, NULL);
+    JSStringRelease(nameStr);
+}
+
+static void _SetStringProperty(JSGlobalContextRef ctx, JSObjectRef obj, const char *name, const char *value) {
+    JSStringRef valueStr = JSStringCreateWithUTF8CString(value);
+    JSValueRef jsValue = JSValueMakeString(ctx, valueStr);
+    _SetProperty(ctx, obj, name, jsValue);
+    JSStringRelease(valueStr);
 }
 
 GraphQLSchemaRef GraphQLSchemaCreate(GraphQLContextRef ctx, GraphQLObjectTypeRef query, GraphQLObjectTypeRef mutation) {
     JSObjectRef config = JSObjectMake(ctx->js, NULL, NULL);
-    JSStringRef queryProp = JSStringCreateWithUTF8CString("query");
-    JSObjectSetProperty(ctx->js, config, queryProp, query, kJSPropertyAttributeNone, NULL);
-    JSStringRelease(queryProp);
+    _SetProperty(ctx->js, config, "query", query);
     if (mutation) {
-        JSStringRef mutationProp = JSStringCreateWithUTF8CString("mutation");
-        JSObjectSetProperty(ctx->js, config, mutationProp, query, kJSPropertyAttributeNone, NULL);
-        JSStringRelease(mutationProp);
+        _SetProperty(ctx->js, config, "mutation", query);
     }
     JSValueRef args[] = { config };
-    return JSObjectCallAsConstructor(ctx->js, ctx->schemaCtor, 1, args, NULL);
-    // TODO protect from gc
+    // TODO error check
+    return JSObjectCallAsConstructor(ctx->js, ctx->ctors.schemaCtor, 1, args, NULL);
 }
 
-GraphQLObjectTypeRef GraphQLObjectTypeCreate(GraphQLContextRef ctx, const char *name, GraphQLFieldConfigMapRef fields) {
+GraphQLObjectTypeRef GraphQLObjectTypeCreate(GraphQLContextRef ctx, const char *name, /* nullable */ GraphQLInterfacesRef interfaces, GraphQLFieldConfigMapRef fields, /* nullable */ GraphQLObjectTypePredicateRef isTypeOf, /* nullable */ const char *description) {
     JSObjectRef config = JSObjectMake(ctx->js, NULL, NULL);
-    JSStringRef nameProp = JSStringCreateWithUTF8CString("name");
-    JSStringRef nameStr = JSStringCreateWithUTF8CString(name);
-    JSValueRef nameValue = JSValueMakeString(ctx->js, nameStr);
-    JSObjectSetProperty(ctx->js, config, nameProp, nameValue, kJSPropertyAttributeNone, NULL);
-    JSStringRelease(nameStr);
-    JSStringRelease(nameProp);
-    JSStringRef fieldsProp = JSStringCreateWithUTF8CString("fields");
-    JSObjectSetProperty(ctx->js, config, fieldsProp, fields, kJSPropertyAttributeNone, NULL);
-    JSStringRelease(fieldsProp);
+    _SetStringProperty(ctx->js, config, "name", name);
+    _SetProperty(ctx->js, config, "fields", fields);
+    if (interfaces) {
+        _SetProperty(ctx->js, config, "interfaces", interfaces);
+    }
+    if (isTypeOf) {
+        _SetProperty(ctx->js, config, "isTypeOf", isTypeOf);
+    }
+    if (description) {
+        _SetStringProperty(ctx->js, config, "description", description);
+    }
     JSValueRef args[] = { config };
-    return JSObjectCallAsConstructor(ctx->js, ctx->objectTypeCtor, 1, args, NULL);
-    // TODO protect from gc
+    // TODO error check
+    return JSObjectCallAsConstructor(ctx->js, ctx->ctors.objectTypeCtor, 1, args, NULL);
 }
 
 GraphQLFieldConfigMapRef GraphQLFieldConfigMapCreate(GraphQLContextRef ctx) {
@@ -115,21 +162,21 @@ static JSValueRef f( JSContextRef ctx, JSObjectRef function, JSObjectRef thisObj
     return strValue;
 }
 
-void GraphQLFieldConfigMapSetField(GraphQLContextRef ctx, GraphQLFieldConfigMapRef fields, const char *name) {
+void GraphQLFieldConfigMapSetField(GraphQLContextRef ctx, GraphQLFieldConfigMapRef fields, const char *name, GraphQLType type, /* nullable */ GraphQLFieldConfigArgumentMapRef args, GraphQLFieldResolveFunc resolve) {
     JSObjectRef fieldConfig = JSObjectMake(ctx->js, NULL, NULL);
-    JSStringRef typeProp = JSStringCreateWithUTF8CString("type");
-    JSObjectSetProperty(ctx->js, fieldConfig, typeProp, ctx->stringType, kJSPropertyAttributeNone, NULL);
-    JSStringRelease(typeProp);
+    _SetProperty(ctx->js, fieldConfig, "type", type);
+    if (args) {
+        _SetProperty(ctx->js, fieldConfig, "args", args);
+    }
     
     JSObjectRef resolveFunc = JSObjectMakeFunctionWithCallback(ctx->js, NULL, f);
     
-    JSStringRef resolveProp = JSStringCreateWithUTF8CString("resolve");
-    JSObjectSetProperty(ctx->js, fieldConfig, resolveProp, resolveFunc, kJSPropertyAttributeNone, NULL);
-    JSStringRelease(resolveProp);
-    
-    JSStringRef nameStr = JSStringCreateWithUTF8CString(name);
-    JSObjectSetProperty(ctx->js, fields, nameStr, fieldConfig, kJSPropertyAttributeNone, NULL);
-    JSStringRelease(nameStr);
+    _SetProperty(ctx->js, fieldConfig, "resolve", resolveFunc);
+    _SetProperty(ctx->js, fields, name, fieldConfig);
+}
+
+GraphQLFieldConfigArgumentMapRef GraphQLFieldConfigArgumentMapCreate(GraphQLContextRef ctx) {
+    return JSObjectMake(ctx->js, NULL, NULL);
 }
 
 GraphQLResultRef GraphQLMain(GraphQLContextRef ctx, GraphQLSchemaRef schema, const char *requestString) {
@@ -140,16 +187,16 @@ GraphQLResultRef GraphQLMain(GraphQLContextRef ctx, GraphQLSchemaRef schema, con
     JSValueRef result = JSObjectCallAsFunction(ctx->js, ctx->mainFunc, NULL, 2, args, &error);
     JSStringRelease(requestStr);
     // TODO error check
-    // TODO protect from gc
     return JSValueToObject(ctx->js, result, NULL);
 }
 
 int main(int argc, char *argv[]) {
     GraphQLContextRef ctx = GraphQLContextCreate();
     GraphQLFieldConfigMapRef fields = GraphQLFieldConfigMapCreate(ctx);
-    GraphQLFieldConfigMapSetField(ctx, fields, "hello");
-    GraphQLObjectTypeRef query = GraphQLObjectTypeCreate(ctx, "QueryRoot", fields);
+    GraphQLFieldConfigMapSetField(ctx, fields, "hello", ctx->scalarTypes.stringType, NULL, NULL);
+    GraphQLObjectTypeRef query = GraphQLObjectTypeCreate(ctx, "QueryRoot", NULL, fields, NULL, NULL);
     GraphQLSchemaRef schema = GraphQLSchemaCreate(ctx, query, NULL);
+
     GraphQLResultRef result = GraphQLMain(ctx, schema, "{ hello }");
 
     JSStringRef json = JSValueCreateJSONString(ctx->js, result, 2, NULL);

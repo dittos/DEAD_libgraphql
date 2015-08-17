@@ -3,7 +3,7 @@
   "version": "1.0.0",
   "description": "",
   "dependencies": {
-    "graphql": "^0.2.6"
+    "graphql": "^0.3.0"
   },
   "devDependencies": {
     "babel-core": "^5.8.22",
